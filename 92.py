@@ -442,10 +442,9 @@ class ExpenseTrackerApp:
         if new_amount is None:  # Проверка на отмену
             return
 
-        new_category = simpledialog.askstring("Редактирование", "Введите новую категорию:", initialvalue=category)
-        if not new_category:  # Проверка на пустое значение
-            messagebox.showerror("Ошибка", "Категория не может быть пустой")
-            return
+        new_category = simpledialog.askstring("Добавить категорию", "Введите новую категорию:")
+        if new_category and new_category not in self.category_combobox['values']:
+            self.category_combobox['values'] = (*self.category_combobox['values'], new_category)
 
         new_description = simpledialog.askstring("Редактирование", "Введите новое описание:", initialvalue=description)
 
