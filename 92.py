@@ -1,471 +1,244 @@
-import tkinter as tk
-from tkinter import ttk, messagebox
-from tkinter import simpledialog
-from tkcalendar import Calendar
-import datetime
-import json
+import customtkinter as ctk
+from tkinter import ttk, filedialog, messagebox
+from tkcalendar import DateEntry
+import sqlite3
 import matplotlib.pyplot as plt
-import csv
-
-class ExpenseTrackerApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Трекер расходов")
-        self.expenses = []
-        self.load_expenses()
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from datetime import datetime
+
+
+# Создание базы данных
+def initialize_database():
+    connection = sqlite3.connect("expenses.db")
+    cursor = connection.cursor()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS expenses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        category TEXT NOT NULL,
+        amount REAL NOT NULL
+    )
+    """)
+    connection.commit()
+    return connection, cursor
+
+
+conn, cursor = initialize_database()
+
+
+# Функции приложения
+def add_expense():
+    date = date_entry.get()
+    category = category_var.get().strip()
+    amount = amount_entry.get()
 
-        # Настройка стилей
-        self.default_font = ("Arial", 12)
-        self.heading_font = ("Arial", 14, "bold")
+    if not date or not category or not amount:
+        messagebox.showerror("Ошибка", "Все поля должны быть заполнены!")
+        return
 
-        style = ttk.Style()
-        style.configure("TLabelframe.Label", font=self.heading_font)
+    try:
+        amount = float(amount)
+    except ValueError:
+        messagebox.showerror("Ошибка", "Сумма должна быть числом!")
+        return
 
-        # Создание интерфейса
-        self.setup_ui()  # Ensure this method is defined only once!
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        messagebox.showerror("Ошибка", "Неверный формат даты! Используйте yyyy-mm-dd.")
+        return
+
+    cursor.execute("INSERT INTO expenses (date, category, amount) VALUES (?, ?, ?)", (date, category, amount))
+    conn.commit()
+    update_expense_list()
+    update_total_label()
+    messagebox.showinfo("Успех", "Расход добавлен!")
+
+
+def update_expense_list(start_date=None, end_date=None, category=None):
+    expense_list.delete(*expense_list.get_children())
+
+    query = "SELECT * FROM expenses"
+    params = []
+
+    if start_date and end_date:
+        query += " WHERE date BETWEEN ? AND ?"
+        params.extend([start_date, end_date])
+
+    if category:
+        if "WHERE" in query:
+            query += " AND category = ?"
+        else:
+            query += " WHERE category = ?"
+        params.append(category)
+
+    cursor.execute(query, tuple(params))
+    rows = cursor.fetchall()
+    for row in rows:
+        expense_list.insert("", "end", values=row)
+
+
+def update_total_label():
+    cursor.execute("SELECT SUM(amount) FROM expenses")
+    total = cursor.fetchone()[0] or 0.0
+    total_label.configure(text=f"Общая сумма: {total:.2f} руб.")
 
-    def setup_ui(self):
-        # Фрейм для ввода
-        input_frame = ttk.LabelFrame(self.root, text="Добавить расход")
-        input_frame.pack(fill="x", padx=10, pady=10)
 
-        ttk.Label(input_frame, text="Сумма:", font=self.default_font).grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.amount_entry = ttk.Entry(input_frame, font=self.default_font)
-        self.amount_entry.grid(row=0, column=1, padx=5, pady=5)
+def delete_expense():
+    selected_items = expense_list.selection()
+    if not selected_items:
+        messagebox.showerror("Ошибка", "Выберите записи для удаления!")
+        return
 
-        ttk.Label(input_frame, text="Категория:", font=self.default_font).grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.category_combobox = ttk.Combobox(input_frame, values=["Еда", "Транспорт", "Развлечения", "Другое"], state="readonly", font=self.default_font)
-        self.category_combobox.grid(row=1, column=1, padx=5, pady=5)
+    for item in selected_items:
+        expense_id = expense_list.item(item, "values")[0]
+        cursor.execute("DELETE FROM expenses WHERE id = ?", (expense_id,))
+        conn.commit()
+        expense_list.delete(item)
 
-        ttk.Label(input_frame, text="Описание:", font=self.default_font).grid(row=2, column=0, padx=5, pady=5, sticky="w")
-        self.description_entry = ttk.Entry(input_frame, font=self.default_font)
-        self.description_entry.grid(row=2, column=1, padx=5, pady=5)
+    update_total_label()
+    messagebox.showinfo("Успех", "Расходы удалены!")
 
-        self.add_button = ttk.Button(input_frame, text="Добавить", command=self.add_expense)
-        self.add_button.grid(row=3, column=0, columnspan=2, pady=10)
-
-        # Фрейм для списка расходов
-        list_frame = ttk.LabelFrame(self.root, text="Список расходов")
-        list_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        self.expense_tree = ttk.Treeview(list_frame, columns=("Дата", "Сумма", "Категория", "Описание"), show="headings")
-        self.expense_tree.heading("Дата", text="Дата", anchor="center")
-        self.expense_tree.heading("Сумма", text="Сумма", anchor="center")
-        self.expense_tree.heading("Категория", text="Категория", anchor="center")
-        self.expense_tree.heading("Описание", text="Описание", anchor="center")
-        self.expense_tree.pack(fill="both", expand=True, padx=5, pady=5)
-
-        # Add the rest of your UI setup below (filtering, buttons, etc.)
-        # Make sure everything is included in the same method.
-
-
-    def setup_ui(self):
-        # Фрейм для ввода
-        input_frame = ttk.LabelFrame(self.root, text="Добавить расход")
-        input_frame.pack(fill="x", padx=10, pady=10)
-
-        ttk.Label(input_frame, text="Сумма:", font=self.default_font).grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.amount_entry = ttk.Entry(input_frame, font=self.default_font)
-        self.amount_entry.grid(row=0, column=1, padx=5, pady=5)
-
-        ttk.Label(input_frame, text="Категория:", font=self.default_font).grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.category_combobox = ttk.Combobox(input_frame, values=["Еда", "Транспорт", "Развлечения", "Другое"], state="readonly", font=self.default_font)
-        self.category_combobox.grid(row=1, column=1, padx=5, pady=5)
-
-        ttk.Label(input_frame, text="Описание:", font=self.default_font).grid(row=2, column=0, padx=5, pady=5, sticky="w")
-        self.description_entry = ttk.Entry(input_frame, font=self.default_font)
-        self.description_entry.grid(row=2, column=1, padx=5, pady=5)
-
-        self.add_button = ttk.Button(input_frame, text="Добавить", command=self.add_expense)
-        self.add_button.grid(row=3, column=0, columnspan=2, pady=10)
-
-        # Фрейм для списка расходов
-        list_frame = ttk.LabelFrame(self.root, text="Список расходов")
-        list_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        self.expense_tree = ttk.Treeview(list_frame, columns=("Дата", "Сумма", "Категория", "Описание"), show="headings")
-        self.expense_tree.heading("Дата", text="Дата", anchor="center")
-        self.expense_tree.heading("Сумма", text="Сумма", anchor="center")
-        self.expense_tree.heading("Категория", text="Категория", anchor="center")
-        self.expense_tree.heading("Описание", text="Описание", anchor="center")
-        self.expense_tree.pack(fill="both", expand=True, padx=5, pady=5)
-
-        # Фрейм для фильтрации и анализа
-        filter_frame = ttk.LabelFrame(self.root, text="Фильтр расходов")
-        filter_frame.pack(fill="x", padx=10, pady=10)
-
-        ttk.Label(filter_frame, text="Категория:", font=self.default_font).grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.filter_combobox = ttk.Combobox(filter_frame, values=["Все расходы", "Еда", "Транспорт", "Развлечения", "Другое"], state="readonly", font=self.default_font)
-        self.filter_combobox.grid(row=0, column=1, padx=5, pady=5)
-        self.filter_combobox.set("Все расходы")
-
-        ttk.Label(filter_frame, text="Дата с:", font=self.default_font).grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.start_date_entry = Calendar(filter_frame, selectmode='day', date_pattern='yyyy-mm-dd', font=self.default_font)
-        self.start_date_entry.grid(row=1, column=1, padx=5, pady=5)
-
-        ttk.Label(filter_frame, text="Дата по:", font=self.default_font).grid(row=1, column=2, padx=5, pady=5, sticky="w")
-        self.end_date_entry = Calendar(filter_frame, selectmode='day', date_pattern='yyyy-mm-dd', font=self.default_font)
-        self.end_date_entry.grid(row=1, column=3, padx=5, pady=5)
 
-        self.filter_button = ttk.Button(filter_frame, text="Фильтровать", command=self.filter_expenses)
-        self.filter_button.grid(row=2, column=0, columnspan=4, pady=5)
+def analyze_expenses():
+    cursor.execute("SELECT category, SUM(amount) FROM expenses GROUP BY category")
+    data = cursor.fetchall()
 
-        self.analyze_button = ttk.Button(filter_frame, text="Анализ", command=self.analyze_expenses)
-        self.analyze_button.grid(row=3, column=0, columnspan=4, pady=5)
+    if not data:
+        messagebox.showerror("Ошибка", "Нет данных для анализа!")
+        return
 
-        self.reset_button = ttk.Button(filter_frame, text="Сбросить фильтр", command=self.reset_filter)
-        self.reset_button.grid(row=4, column=0, columnspan=4, pady=5)
+    categories = [row[0] for row in data]
+    amounts = [row[1] for row in data]
 
-        # Фрейм для кнопок управления
-        button_frame = ttk.Frame(self.root)
-        button_frame.pack(fill="x", padx=10, pady=10)
-
-        self.total_label = ttk.Label(button_frame, text="Общая сумма: 0", font=self.heading_font)
-        self.total_label.pack(side="left")
-
-        ttk.Button(button_frame, text="Удалить выбранный", command=self.delete_selected_expense).pack(side="right", padx=5)
-        ttk.Button(button_frame, text="Очистить все", command=self.clear_expenses).pack(side="right", padx=5)
-        ttk.Button(button_frame, text="Выход", command=self.root.quit).pack(side="right", padx=5)
-
-        # Экспорт в CSV
-        self.export_button = ttk.Button(button_frame, text="Экспорт в CSV", command=self.export_to_csv)
-        self.export_button.pack(side="right", padx=5)
-
-        # Обновить список расходов
-        self.update_expense_list()
-
-    def add_expense(self):
-        try:
-            amount = float(self.amount_entry.get())
-            category = self.category_combobox.get()
-            description = self.description_entry.get()
-
-            if not category:
-                messagebox.showerror("Ошибка", "Категория не может быть пустой")
-                return
-
-            expense = {
-                "date": datetime.date.today().strftime("%Y-%m-%d"),
-                "amount": amount,
-                "category": category,
-                "description": description
-            }
-
-            self.expenses.append(expense)
-            self.update_expense_list()
-            self.save_expenses()
-
-            self.amount_entry.delete(0, tk.END)
-            self.category_combobox.set("")
-            self.description_entry.delete(0, tk.END)
-
-            messagebox.showinfo("Успех", "Расход добавлен")
-        except ValueError:
-            messagebox.showerror("Ошибка", "Введите корректную сумму")
-
-    def update_expense_list(self):
-        for row in self.expense_tree.get_children():
-            self.expense_tree.delete(row)
-
-        total = 0
-        for expense in self.expenses:
-            self.expense_tree.insert("", tk.END, values=(expense["date"], expense["amount"], expense["category"], expense["description"]))
-            total += expense["amount"]
-
-        self.total_label.config(text=f"Общая сумма: {total}")
-
-    def filter_expenses(self):
-        selected_category = self.filter_combobox.get()
-        start_date_str = self.start_date_entry.get_date() if self.start_date_entry.get_date() else None
-        end_date_str = self.end_date_entry.get_date() if self.end_date_entry.get_date() else None
-
-        start_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date() if start_date_str else None
-        end_date = datetime.datetime.strptime(end_date_str, "%Y-%m-%d").date() if end_date_str else None
-
-        filtered_expenses = [expense for expense in self.expenses if
-                             (selected_category == "Все расходы" or expense["category"] == selected_category)]
-
-        if start_date:
-            filtered_expenses = [expense for expense in filtered_expenses if
-                                 datetime.datetime.strptime(expense["date"], "%Y-%m-%d").date() >= start_date]
-        if end_date:
-            filtered_expenses = [expense for expense in filtered_expenses if
-                                 datetime.datetime.strptime(expense["date"], "%Y-%m-%d").date() <= end_date]
-
-        if not filtered_expenses:
-            messagebox.showinfo("Результаты фильтрации", "По выбранным критериям не найдено расходов.")
-
-        self.expense_tree.delete(*self.expense_tree.get_children())
-
-        total = 0
-        for expense in filtered_expenses:
-            self.expense_tree.insert("", tk.END, values=(expense["date"], expense["amount"], expense["category"], expense["description"]))
-            total += expense["amount"]
-
-        self.total_label.config(text=f"Общая сумма: {total}")
-
-    def reset_filter(self):
-        self.filter_combobox.set("Все расходы")
-        self.start_date_entry.delete(0, tk.END)  # Очистка поля даты с
-        self.end_date_entry.delete(0, tk.END)  # Очистка поля даты по
-        self.update_expense_list()
-
-    def analyze_expenses(self):
-        if not self.expenses:
-            messagebox.showinfo("Анализ расходов", "Нет данных для анализа")
-            return
-
-        category_totals = {}
-        for expense in self.expenses:
-            category = expense["category"]
-            amount = expense["amount"]
-            category_totals[category] = category_totals.get(category, 0) + amount
-
-        analysis_message = "Анализ расходов по категориям:\n"
-        for category, total in category_totals.items():
-            analysis_message += f"{category}: {total}\n"
-
-        messagebox.showinfo("Анализ расходов", analysis_message)
-
-        categories = list(category_totals.keys())
-        totals = list(category_totals.values())
-        plt.figure(figsize=(8, 6))
-        plt.pie(totals, labels=categories, autopct="%1.1f%%", startangle=140)
-        plt.title("Распределение расходов по категориям")
-        plt.show()
-
-    def delete_selected_expense(self):
-        selected_items = self.expense_tree.selection()
-        if not selected_items:
-            messagebox.showerror("Ошибка", "Выберите расход для удаления")
-            return
-
-        for selected_item in selected_items:
-            values = self.expense_tree.item(selected_item, "values")
-            for expense in self.expenses:
-                if (
-                        expense["date"] == values[0]
-                        and expense["amount"] == float(values[1])
-                        and expense["category"] == values[2]
-                        and expense["description"] == values[3]
-                ):
-                    self.expenses.remove(expense)
-                    break
-
-        self.update_expense_list()
-        self.save_expenses()
-        messagebox.showinfo("Успех", "Выбранный расход(ы) удалён")
-
-    def clear_expenses(self):
-        if messagebox.askyesno("Подтверждение", "Вы уверены, что хотите удалить все расходы?"):
-            self.expenses.clear()
-            self.update_expense_list()
-            self.save_expenses()
-            messagebox.showinfo("Успех", "Все расходы удалены")
-
-    def save_expenses(self):
-        try:
-            with open("expenses.json", "w", encoding="utf-8") as f:
-                json.dump(self.expenses, f, ensure_ascii=False, indent=4)
-        except Exception as e:
-            messagebox.showerror("Ошибка сохранения", f"Не удалось сохранить данные: {e}")
-
-    def load_expenses(self):
-        try:
-            with open("expenses.json", "r", encoding="utf-8") as f:
-                self.expenses = json.load(f)
-        except FileNotFoundError:
-            self.expenses = []
-        except Exception as e:
-            messagebox.showerror("Ошибка загрузки", f"Не удалось загрузить данные: {e}")
-
-    def export_to_csv(self):
-        if not self.expenses:
-            messagebox.showinfo("Экспорт", "Нет данных для экспорта")
-            return
-
-        try:
-            with open("expenses.csv", "w", newline='', encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow(["Дата", "Сумма", "Категория", "Описание"])
-                for expense in self.expenses:
-                    writer.writerow([expense["date"], expense["amount"], expense["category"], expense["description"]])
-
-            messagebox.showinfo("Успех", "Данные успешно экспортированы в CSV")
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось экспортировать данные: {e}")
-
-    def edit_expense(self):
-        selected_item = self.expense_tree.selection()
-        if not selected_item:
-            messagebox.showerror("Ошибка", "Выберите расход для редактирования")
-            return
-
-        values = self.expense_tree.item(selected_item[0], "values")
-        date, amount, category, description = values
-
-        new_amount = simpledialog.askfloat("Редактирование", "Введите новую сумму:", initialvalue=float(amount))
-        new_category = simpledialog.askstring("Редактирование", "Введите новую категорию:", initialvalue=category)
-        new_description = simpledialog.askstring("Редактирование", "Введите новое описание:", initialvalue=description)
-
-        if new_amount and new_category and new_description:
-            for expense in self.expenses:
-                if (
-                        expense["date"] == date
-                        and expense["amount"] == float(amount)
-                        and expense["category"] == category
-                        and expense["description"] == description
-                ):
-                    expense["amount"] = new_amount
-                    expense["category"] = new_category
-                    expense["description"] = new_description
-                    break
-
-            self.update_expense_list()
-            self.save_expenses()
-            messagebox.showinfo("Успех", "Расход успешно отредактирован")
-
-    def setup_ui(self):
-        # Фрейм для ввода
-        input_frame = ttk.LabelFrame(self.root, text="Добавить расход")
-        input_frame.pack(fill="x", padx=10, pady=10)
-
-        ttk.Label(input_frame, text="Сумма:", font=self.default_font).grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.amount_entry = ttk.Entry(input_frame, font=self.default_font)
-        self.amount_entry.grid(row=0, column=1, padx=5, pady=5)
-
-        ttk.Label(input_frame, text="Категория:", font=self.default_font).grid(row=1, column=0, padx=5, pady=5,
-                                                                               sticky="w")
-        self.category_combobox = ttk.Combobox(input_frame, values=["Еда", "Транспорт", "Развлечения", "Другое"],
-                                              state="readonly", font=self.default_font)
-        self.category_combobox.grid(row=1, column=1, padx=5, pady=5)
-
-        ttk.Label(input_frame, text="Описание:", font=self.default_font).grid(row=2, column=0, padx=5, pady=5,
-                                                                              sticky="w")
-        self.description_entry = ttk.Entry(input_frame, font=self.default_font)
-        self.description_entry.grid(row=2, column=1, padx=5, pady=5)
-
-        self.add_button = ttk.Button(input_frame, text="Добавить", command=self.add_expense)
-        self.add_button.grid(row=3, column=0, columnspan=2, pady=10)
-
-        # Фрейм для списка расходов
-        list_frame = ttk.LabelFrame(self.root, text="Список расходов")
-        list_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        self.expense_tree = ttk.Treeview(list_frame, columns=("Дата", "Сумма", "Категория", "Описание"),
-                                         show="headings")
-        self.expense_tree.heading("Дата", text="Дата", anchor="center")
-        self.expense_tree.heading("Сумма", text="Сумма", anchor="center")
-        self.expense_tree.heading("Категория", text="Категория", anchor="center")
-        self.expense_tree.heading("Описание", text="Описание", anchor="center")
-        self.expense_tree.pack(fill="both", expand=True, padx=5, pady=5)
-
-        # Фрейм для фильтрации и анализа
-        filter_frame = ttk.LabelFrame(self.root, text="Фильтр расходов")
-        filter_frame.pack(fill="x", padx=10, pady=10)
-
-        ttk.Label(filter_frame, text="Категория:", font=self.default_font).grid(row=0, column=0, padx=5, pady=5,
-                                                                                sticky="w")
-        self.filter_combobox = ttk.Combobox(filter_frame,
-                                            values=["Все расходы", "Еда", "Транспорт", "Развлечения", "Другое"],
-                                            state="readonly", font=self.default_font)
-        self.filter_combobox.grid(row=0, column=1, padx=5, pady=5)
-        self.filter_combobox.set("Все расходы")
-
-        ttk.Label(filter_frame, text="Дата с:", font=self.default_font).grid(row=1, column=0, padx=5, pady=5,
-                                                                             sticky="w")
-        self.start_date_entry = Calendar(filter_frame, selectmode='day', date_pattern='yyyy-mm-dd',
-                                         font=self.default_font)
-        self.start_date_entry.grid(row=1, column=1, padx=5, pady=5)
-
-        ttk.Label(filter_frame, text="Дата по:", font=self.default_font).grid(row=1, column=2, padx=5, pady=5,
-                                                                              sticky="w")
-        self.end_date_entry = Calendar(filter_frame, selectmode='day', date_pattern='yyyy-mm-dd',
-                                       font=self.default_font)
-        self.end_date_entry.grid(row=1, column=3, padx=5, pady=5)
-
-        self.filter_button = ttk.Button(filter_frame, text="Фильтровать", command=self.filter_expenses)
-        self.filter_button.grid(row=2, column=0, columnspan=4, pady=5)
-
-        self.analyze_button = ttk.Button(filter_frame, text="Анализ", command=self.analyze_expenses)
-        self.analyze_button.grid(row=3, column=0, columnspan=4, pady=5)
-
-        self.reset_button = ttk.Button(filter_frame, text="Сбросить фильтр", command=self.reset_filter)
-        self.reset_button.grid(row=4, column=0, columnspan=4, pady=5)
-
-        # Фрейм для кнопок управления
-        button_frame = ttk.Frame(self.root)
-        button_frame.pack(fill="x", padx=10, pady=10)
-
-        self.total_label = ttk.Label(button_frame, text="Общая сумма: 0", font=self.heading_font)
-        self.total_label.pack(side="left")
-
-        ttk.Button(button_frame, text="Удалить выбранный", command=self.delete_selected_expense).pack(side="right",
-                                                                                                      padx=5)
-        ttk.Button(button_frame, text="Очистить все", command=self.clear_expenses).pack(side="right", padx=5)
-        ttk.Button(button_frame, text="Выход", command=self.root.quit).pack(side="right", padx=5)
-
-        # Экспорт в CSV
-        self.export_button = ttk.Button(button_frame, text="Экспорт в CSV", command=self.export_to_csv)
-        self.export_button.pack(side="right", padx=5)
-
-        # Добавление кнопки для редактирования выбранных расходов
-        self.edit_button = ttk.Button(button_frame, text="Редактировать выбранный", command=self.edit_expense)
-        self.edit_button.pack(side="right", padx=5)
-
-        # Обновить список расходов
-        self.update_expense_list()  # Перемещаем сюда вызов
-
-    def update_expense_list(self):
-        for row in self.expense_tree.get_children():
-            self.expense_tree.delete(row)
-
-        total = 0
-        for expense in self.expenses:
-            self.expense_tree.insert("", tk.END, values=(
-            expense["date"], expense["amount"], expense["category"], expense["description"]))
-            total += expense["amount"]
-
-        self.total_label.config(text=f"Общая сумма: {total}")
-
-    def edit_expense(self):
-        selected_item = self.expense_tree.selection()
-        if not selected_item:
-            messagebox.showerror("Ошибка", "Выберите расход для редактирования")
-            return
-
-        values = self.expense_tree.item(selected_item[0], "values")
-        date, amount, category, description = values
-
-        # Запрашиваем новые данные
-        new_amount = simpledialog.askfloat("Редактирование", "Введите новую сумму:", initialvalue=float(amount))
-        if new_amount is None:  # Проверка на отмену
-            return
-
-        new_category = simpledialog.askstring("Добавить категорию", "Введите новую категорию:")
-        if new_category and new_category not in self.category_combobox['values']:
-            self.category_combobox['values'] = (*self.category_combobox['values'], new_category)
-
-        new_description = simpledialog.askstring("Редактирование", "Введите новое описание:", initialvalue=description)
-
-        if new_description is None:  # Проверка на отмену
-            new_description = description  # Если пользователь отменил, оставить старое описание
-
-        # Обновляем расход
-        for expense in self.expenses:
-            if expense["date"] == date and expense["amount"] == float(amount) and expense["category"] == category and \
-                    expense["description"] == description:
-                expense["amount"] = new_amount
-                expense["category"] = new_category
-                expense["description"] = new_description
-                break
-
-        self.update_expense_list()
-        self.save_expenses()
-        messagebox.showinfo("Успех", "Расход успешно отредактирован")
-
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = ExpenseTrackerApp(root)
-    root.mainloop()
+    analysis_window = ctk.CTkToplevel(app)
+    analysis_window.title("Анализ расходов")
+    analysis_window.geometry("600x400")
+
+    figure = plt.Figure(figsize=(6, 4), dpi=100)
+    ax = figure.add_subplot(111)
+    ax.pie(amounts, labels=categories, autopct='%1.1f%%', startangle=140)
+    ax.set_title("Расходы по категориям")
+
+    chart = FigureCanvasTkAgg(figure, analysis_window)
+    chart.get_tk_widget().pack(fill='both', expand=True)
+
+    def save_chart():
+        file_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG", "*.png")])
+        if file_path:
+            figure.savefig(file_path)
+
+    save_button = ctk.CTkButton(analysis_window, text="Сохранить график", command=save_chart)
+    save_button.pack(pady=10)
+
+
+def save_database():
+    file_path = filedialog.asksaveasfilename(defaultextension=".db", filetypes=[("SQLite Database", "*.db")])
+    if file_path:
+        with open('expenses.db', 'rb') as source:
+            with open(file_path, 'wb') as target:
+                target.write(source.read())
+        messagebox.showinfo("Успех", "База данных сохранена!")
+
+
+def load_database():
+    file_path = filedialog.askopenfilename(defaultextension=".db", filetypes=[("SQLite Database", "*.db")])
+    if file_path:
+        global conn, cursor
+        conn.close()
+        conn = sqlite3.connect(file_path)
+        cursor = conn.cursor()
+        update_expense_list()
+        update_total_label()
+        messagebox.showinfo("Успех", "База данных загружена!")
+
+
+# Функция проверки, чтобы ввод был числовым
+def validate_number_input(char, entry_value):
+    if char.isdigit() or char == ".":
+        return True
+    return False
+
+
+# Интерфейс приложения
+app = ctk.CTk()
+app.title("Трекер расходов")
+app.geometry("800x600")
+
+app.grid_rowconfigure(6, weight=1)
+app.grid_columnconfigure(1, weight=1)
+
+# Поля для ввода
+ctk.CTkLabel(app, text="Дата:").grid(row=0, column=0, padx=10, pady=5, sticky="w")
+date_entry = DateEntry(app, date_pattern="yyyy-mm-dd", background="darkblue", foreground="white", borderwidth=2)
+date_entry.grid(row=0, column=1, padx=10, pady=5, sticky="ew")
+
+ctk.CTkLabel(app, text="Категория:").grid(row=1, column=0, padx=10, pady=5, sticky="w")
+
+# Список категорий
+categories_list = ["Продукты", "Транспорт", "Развлечения", "Жилье", "Здоровье", "Другое"]
+category_var = ctk.StringVar(value=categories_list[0])  # Default category is the first one
+
+category_option_menu = ctk.CTkOptionMenu(app, variable=category_var, values=categories_list)
+category_option_menu.grid(row=1, column=1, padx=10, pady=5, sticky="ew")
+
+ctk.CTkLabel(app, text="Сумма:").grid(row=2, column=0, padx=10, pady=5, sticky="w")
+
+# Настройка валидации для поля "Сумма"
+validate_command = (app.register(validate_number_input), '%S', '%P')
+amount_entry = ctk.CTkEntry(app, validate='key', validatecommand=validate_command)
+amount_entry.grid(row=2, column=1, padx=10, pady=5, sticky="ew")
+
+# Кнопки управления
+add_button = ctk.CTkButton(app, text="Добавить", command=add_expense)
+add_button.grid(row=3, column=0, padx=10, pady=10, sticky="ew")
+
+delete_button = ctk.CTkButton(app, text="Удалить", command=delete_expense)
+delete_button.grid(row=3, column=1, padx=10, pady=10, sticky="ew")
+
+analyze_button = ctk.CTkButton(app, text="Анализировать", command=analyze_expenses)
+analyze_button.grid(row=3, column=2, padx=10, pady=10, sticky="ew")
+
+# Фильтры
+ctk.CTkLabel(app, text="Начальная дата:").grid(row=4, column=0, padx=10, pady=5, sticky="w")
+start_date_entry = DateEntry(app, date_pattern="yyyy-mm-dd", background="darkblue", foreground="white", borderwidth=2)
+start_date_entry.grid(row=4, column=1, padx=10, pady=5, sticky="ew")
+
+ctk.CTkLabel(app, text="Конечная дата:").grid(row=5, column=0, padx=10, pady=5, sticky="w")
+end_date_entry = DateEntry(app, date_pattern="yyyy-mm-dd", background="darkblue", foreground="white", borderwidth=2)
+end_date_entry.grid(row=5, column=1, padx=10, pady=5, sticky="ew")
+
+filter_button = ctk.CTkButton(app, text="Применить фильтр", command=lambda: update_expense_list(start_date=start_date_entry.get(), end_date=end_date_entry.get()))
+filter_button.grid(row=5, column=2, padx=10, pady=10, sticky="ew")
+
+reset_filter_button = ctk.CTkButton(app, text="Сбросить фильтр", command=lambda: update_expense_list())
+reset_filter_button.grid(row=5, column=3, padx=10, pady=10, sticky="ew")
+
+# Таблица расходов
+columns = ("id", "date", "category", "amount")
+expense_list = ttk.Treeview(app, columns=columns, show="headings", height=10)
+expense_list.heading("id", text="ID")
+expense_list.heading("date", text="Дата")
+expense_list.heading("category", text="Категория")
+expense_list.heading("amount", text="Сумма")
+expense_list.grid(row=6, column=0, columnspan=4, padx=10, pady=10, sticky="nsew")
+
+scrollbar = ttk.Scrollbar(app, orient="vertical", command=expense_list.yview)
+expense_list.configure(yscroll=scrollbar.set)
+scrollbar.grid(row=6, column=4, sticky="ns")
+
+# Общая сумма расходов
+total_label = ctk.CTkLabel(app, text="Общая сумма: 0.00 руб.")
+total_label.grid(row=7, column=0, columnspan=4, pady=10)
+
+# Кнопки для базы данных
+save_button = ctk.CTkButton(app, text="Сохранить базу данных", command=save_database)
+save_button.grid(row=8, column=0, padx=10, pady=10, sticky="ew")
+
+load_button = ctk.CTkButton(app, text="Загрузить базу данных", command=load_database)
+load_button.grid(row=8, column=1, padx=10, pady=10, sticky="ew")
+
+update_expense_list()
+update_total_label()
+
+app.mainloop()
